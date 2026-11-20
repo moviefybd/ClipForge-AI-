@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">ClipForge AI</string>
+    <string name="app_tagline">Turn Every Long Video Into Amazing Shorts.</string>
+    <string name="welcome_title">Create Amazing Shorts</string>
+    <string name="welcome_subtitle">Turn long videos into engaging vertical content.</string>
+    <string name="card_ai_shorts_title">AI Shorts Generator</string>
+    <string name="card_ai_shorts_desc">Find interesting moments and create short videos.</string>
+    <string name="card_one_click_title">One Click 9:16</string>
+    <string name="card_one_click_desc">Convert any regular video into vertical Shorts.</string>
+    <string name="card_subtitle_title">Subtitle Studio</string>
+    <string name="card_subtitle_desc">Add and customize captions.</string>
+    <string name="card_watermark_title">Watermark Studio</string>
+    <string name="card_watermark_desc">Customize your brand watermark.</string>
+    <string name="card_projects_title">My Projects</string>
+    <string name="card_projects_desc">Access previous video projects.</string>
+    <string name="card_history_title">Export History</string>
+    <string name="card_history_desc">Find your completed videos.</string>
+    <string name="default_watermark_text">ClipForge AI</string>
+    <string name="export_channel_name">Video Exports</string>
+    <string name="export_channel_desc">Shows progress and completion status for ClipForge AI video exports.</string>
+</resources>

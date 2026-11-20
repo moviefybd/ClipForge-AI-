@@ -1,0 +1,6 @@
+{
+  "name": "ClipForge AI",
+  "description": "Turn long videos into vertical 9:16 Shorts with AI moment detection, automatic Bengali and English subtitles, and custom watermarks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
