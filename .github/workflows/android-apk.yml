@@ -21,11 +21,20 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '12266719'
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+          packages: |
+            platform-tools
+            platforms;android-36.1
+            platforms;android-36
+            build-tools;36.0.0
 
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
@@ -41,7 +50,8 @@ jobs:
 
       - name: Build Debug APK
         run: |
-          if [ -x "./gradlew" ]; then
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
             ./gradlew :app:assembleDebug --no-daemon --stacktrace
           else
             gradle :app:assembleDebug --no-daemon --stacktrace
@@ -68,5 +78,5 @@ jobs:
         if: failure()
         run: |
           echo "### ClipForge AI Debug APK build failed" >> "$GITHUB_STEP_SUMMARY"
-          echo "Check the 'Build Debug APK' step logs above for Gradle/Kotlin compilation or signing errors." >> "$GITHUB_STEP_SUMMARY"
-          echo "::error::ClipForge AI Debug APK build failed. Inspect the Gradle output above for details."
+          echo "Check the failed step logs above for Android SDK, Gradle, Kotlin, or signing errors." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::ClipForge AI Debug APK build failed. Inspect the workflow logs above for details."
