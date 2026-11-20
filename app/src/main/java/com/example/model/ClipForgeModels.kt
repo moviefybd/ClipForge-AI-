@@ -195,6 +195,9 @@ sealed interface SubtitleGenState {
 sealed interface UrlDownloadState {
     data object Idle : UrlDownloadState
     data class Validating(val url: String) : UrlDownloadState
+    data class CheckingYouTubeLicense(val watchUrl: String) : UrlDownloadState
+    data class YouTubeLicenseVerified(val info: com.example.media.YouTubeMetadataResult) : UrlDownloadState
+    data class YouTubePermissionWarning(val info: com.example.media.YouTubeMetadataResult) : UrlDownloadState
     data class Downloading(val progressPercent: Int, val downloadedMb: Float, val totalMb: Float?) : UrlDownloadState
     data class Completed(val localFilePath: String, val metadata: VideoMetadata) : UrlDownloadState
     data class Error(val message: String) : UrlDownloadState

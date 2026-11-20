@@ -17,8 +17,6 @@ import java.util.concurrent.TimeUnit
 object VideoUrlDownloader {
 
     private val restrictedHosts = listOf(
-        "youtube.com",
-        "youtu.be",
         "tiktok.com",
         "instagram.com",
         "facebook.com",
@@ -30,6 +28,12 @@ object VideoUrlDownloader {
         "netflix.com"
     )
 
+    private val youtubeHosts = listOf(
+        "youtube.com",
+        "youtu.be",
+        "youtube-nocookie.com"
+    )
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -38,6 +42,7 @@ object VideoUrlDownloader {
 
     sealed interface ValidationResult {
         data class Valid(val normalizedUrl: String) : ValidationResult
+        data class YouTube(val normalizedUrl: String, val videoId: String) : ValidationResult
         data class Invalid(val reason: String) : ValidationResult
     }
 
@@ -58,6 +63,13 @@ object VideoUrlDownloader {
         val host = uri.host?.lowercase().orEmpty()
         if (host.isEmpty()) {
             return ValidationResult.Invalid("Unable to determine the server host from this URL.")
+        }
+        if (youtubeHosts.any { host == it || host.endsWith(".$it") }) {
+            val videoId = YouTubeLicenseChecker.extractYouTubeVideoId(trimmed)
+                ?: return ValidationResult.Invalid(
+                    "Could not identify a valid YouTube video ID from this link. Paste a standard watch, Shorts, or youtu.be video URL."
+                )
+            return ValidationResult.YouTube(trimmed, videoId)
         }
         if (restrictedHosts.any { host == it || host.endsWith(".$it") }) {
             return ValidationResult.Invalid(

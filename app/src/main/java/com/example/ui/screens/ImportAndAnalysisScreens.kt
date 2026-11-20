@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCut
@@ -38,6 +40,8 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -65,11 +69,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.example.media.YouTubeMetadataResult
 import com.example.model.AiAnalysisState
 import com.example.model.SuggestedClip
 import com.example.model.UrlDownloadState
@@ -85,7 +91,10 @@ import com.example.ui.components.VideoPlayerStage
 import com.example.ui.theme.AccentLavender
 import com.example.ui.theme.PrimaryPurple
 import com.example.ui.theme.PrimaryPurpleContainer
+import com.example.ui.theme.StatusError
+import com.example.ui.theme.StatusErrorContainer
 import com.example.ui.theme.StatusSuccess
+import com.example.ui.theme.StatusWarning
 import com.example.ui.theme.StudioBackground
 import com.example.ui.theme.StudioBorder
 import com.example.ui.theme.StudioCardElevated
@@ -137,7 +146,7 @@ fun AiShortsGeneratorScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "Import a video from your device or paste an authorized direct MP4/MOV/WebM video URL.",
+                        text = "Import a video from your device, paste a direct authorized MP4/MOV/WebM URL, or check a YouTube link's reuse license.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary
                     )
@@ -172,7 +181,7 @@ fun AiShortsGeneratorScreen(
                     ) {
                         Icon(Icons.Filled.Link, contentDescription = null, tint = AccentLavender)
                         Spacer(Modifier.width(10.dp))
-                        Text("Paste Direct Video URL", color = TextPrimary)
+                        Text("Paste Video or YouTube URL", color = TextPrimary)
                     }
                 }
             }
@@ -262,9 +271,11 @@ fun VideoUrlInputScreen(
     onStartDownload: (String) -> Unit,
     onCancelDownload: () -> Unit,
     onResetState: () -> Unit,
+    onOpenLocalPicker: () -> Unit,
     onContinueToTarget: () -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     var urlText by remember { mutableStateOf("") }
 
     Scaffold(
@@ -273,7 +284,7 @@ fun VideoUrlInputScreen(
         topBar = {
             StudioTopBar(
                 title = "Video URL Input",
-                subtitle = "Direct MP4 / MOV / WebM streams",
+                subtitle = "Authorized direct video URLs & YouTube license check",
                 onBack = onBack
             )
         }
@@ -289,13 +300,13 @@ fun VideoUrlInputScreen(
             item {
                 StudioCard {
                     Text(
-                        text = "Paste Direct Video URL",
+                        text = "Paste Video URL",
                         style = MaterialTheme.typography.titleLarge,
                         color = TextPrimary
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "ClipForge AI supports direct, authorized video file URLs (.mp4, .mov, .webm). Streaming web pages (YouTube, Instagram, TikTok, etc.) are blocked to respect platform terms and copyright.",
+                        text = "Paste a direct authorized video file URL (.mp4, .mov, .webm) to import immediately, or paste a YouTube URL to identify the video and check its reuse license via authorized metadata.",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )
@@ -304,9 +315,14 @@ fun VideoUrlInputScreen(
                         value = urlText,
                         onValueChange = {
                             urlText = it
-                            if (urlState is UrlDownloadState.Error) onResetState()
+                            if (urlState is UrlDownloadState.Error ||
+                                urlState is UrlDownloadState.YouTubeLicenseVerified ||
+                                urlState is UrlDownloadState.YouTubePermissionWarning
+                            ) {
+                                onResetState()
+                            }
                         },
-                        label = { Text("Video File URL (https://...)") },
+                        label = { Text("Video or YouTube URL (https://...)") },
                         placeholder = { Text("https://example.com/sample_talk.mp4") },
                         singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(
@@ -332,7 +348,7 @@ fun VideoUrlInputScreen(
                                     .height(50.dp)
                                     .testTag("fetch_url_button")
                             ) {
-                                Text("Validate & Load Video")
+                                Text("Verify & Load Video")
                             }
                         }
 
@@ -351,6 +367,109 @@ fun VideoUrlInputScreen(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary
                                 )
+                            }
+                        }
+
+                        is UrlDownloadState.CheckingYouTubeLicense -> {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.testTag("youtube_license_checking")
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    color = PrimaryPurple,
+                                    strokeWidth = 2.5.dp
+                                )
+                                Text(
+                                    text = "Identifying YouTube video and verifying license metadata...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+
+                        is UrlDownloadState.YouTubeLicenseVerified -> {
+                            YouTubeMetadataCard(
+                                info = urlState.info,
+                                isVerified = true,
+                                modifier = Modifier.testTag("youtube_license_verified_card")
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Button(
+                                onClick = onOpenLocalPicker,
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .testTag("youtube_authorized_import_local_button")
+                            ) {
+                                Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Continue: Import Authorized Video File")
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(urlState.info.watchUrl))
+                                        )
+                                    }
+                                },
+                                border = BorderStroke(1.dp, StudioBorder),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("youtube_open_watch_button")
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, tint = AccentLavender)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Open Video & Attribution on YouTube", color = TextPrimary)
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    urlText = ""
+                                    onResetState()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Paste Direct Authorized MP4 Link Instead", color = AccentLavender)
+                            }
+                        }
+
+                        is UrlDownloadState.YouTubePermissionWarning -> {
+                            YouTubeMetadataCard(
+                                info = urlState.info,
+                                isVerified = false,
+                                modifier = Modifier.testTag("youtube_permission_warning_card")
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Button(
+                                onClick = onOpenLocalPicker,
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .testTag("youtube_warning_import_local_button")
+                            ) {
+                                Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Import Local Video You Own")
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    urlText = ""
+                                    onResetState()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Try Another URL", color = TextPrimary)
                             }
                         }
 
@@ -410,6 +529,104 @@ fun VideoUrlInputScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun YouTubeMetadataCard(
+    info: YouTubeMetadataResult,
+    isVerified: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val accentColor = if (isVerified) StatusSuccess else StatusWarning
+    val containerColor = if (isVerified) {
+        StatusSuccess.copy(alpha = 0.12f)
+    } else {
+        StatusErrorContainer
+    }
+    val borderColor = if (isVerified) {
+        StatusSuccess.copy(alpha = 0.5f)
+    } else {
+        StatusError.copy(alpha = 0.6f)
+    }
+
+    Surface(
+        color = containerColor,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, borderColor),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = if (isVerified) Icons.Filled.Verified else Icons.Filled.WarningAmber,
+                    contentDescription = if (isVerified) "License verified" else "Copyright warning",
+                    tint = if (isVerified) StatusSuccess else StatusError
+                )
+                Text(
+                    text = info.message,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (!info.thumbnailUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = info.thumbnailUrl,
+                        contentDescription = info.title ?: "YouTube video thumbnail",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .width(96.dp)
+                            .height(54.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(StudioCardElevated)
+                    )
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = info.title ?: "YouTube Video (${info.videoId})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (!info.channelTitle.isNullOrBlank()) {
+                        Text(
+                            text = "Channel: ${info.channelTitle}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AccentLavender,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    StatusPill(
+                        label = info.sourceLabel,
+                        color = accentColor
+                    )
+                }
+            }
+
+            Text(
+                text = info.detailNote,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary
+            )
         }
     }
 }

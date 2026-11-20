@@ -1,6 +1,12 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,11 +26,14 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Movie
@@ -43,6 +52,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -55,13 +65,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.BuildConfig
+import com.example.R
 import com.example.data.local.ExportRecordEntity
 import com.example.data.local.ProjectEntity
 import com.example.media.MediaStoreExporter
@@ -80,7 +96,9 @@ import com.example.ui.theme.StatusError
 import com.example.ui.theme.StatusSuccess
 import com.example.ui.theme.StatusWarning
 import com.example.ui.theme.StudioBackground
+import com.example.ui.theme.StudioBorder
 import com.example.ui.theme.StudioCardElevated
+import com.example.ui.theme.StudioSecondaryBg
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import java.io.File
@@ -416,6 +434,7 @@ fun SettingsScreen(
     onOpenAboutPrivacy: () -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     var watermarkDraft by remember(settings.defaultWatermarkText) {
         mutableStateOf(settings.defaultWatermarkText)
     }
@@ -573,6 +592,26 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            item {
+                DeveloperProfileSectionCard(
+                    onOpenUrl = { url ->
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }
+                    },
+                    onOpenEmail = { email ->
+                        runCatching {
+                            val mailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                                data = Uri.parse("mailto:$email")
+                                putExtra(Intent.EXTRA_EMAIL, arrayOf(email))
+                                putExtra(Intent.EXTRA_SUBJECT, "ClipForge AI")
+                            }
+                            context.startActivity(mailIntent)
+                        }
+                    }
+                )
+            }
         }
     }
 
@@ -601,6 +640,188 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun DeveloperProfileSectionCard(
+    onOpenUrl: (String) -> Unit,
+    onOpenEmail: (String) -> Unit
+) {
+    val facebookUrl = "https://www.facebook.com/share/1DyNKzEBBW/"
+    val instagramUrl = "https://www.instagram.com/md_ibrahim_kl?igsh=MXc5eWdrdHVxYXh6YQ=="
+    val emailAddress = "ibrahimraj26@gmail.com"
+
+    StudioCard(
+        highlighted = true,
+        modifier = Modifier.testTag("settings_developer_section")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Developer",
+                style = MaterialTheme.typography.titleMedium,
+                color = TextPrimary
+            )
+            StatusPill(label = "CREATOR", color = AccentLavender)
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.developer_avatar),
+                contentDescription = "Developer portrait of MD Ibrahim Raj",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .border(2.dp, PrimaryPurple, CircleShape)
+            )
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "MD Ibrahim Raj",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "Junior Developer",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = AccentLavender
+                )
+                Text(
+                    text = "ClipForge AI Android App",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = "Social Media & Contact",
+            style = MaterialTheme.typography.labelMedium,
+            color = TextSecondary
+        )
+        Spacer(Modifier.height(8.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            DeveloperContactRow(
+                label = "Facebook",
+                subtitle = "Open Facebook profile",
+                painter = painterResource(id = R.drawable.ic_social_facebook),
+                badgeColor = Color(0xFF1877F2),
+                testTag = "developer_facebook_button",
+                onClick = { onOpenUrl(facebookUrl) }
+            )
+
+            DeveloperContactRow(
+                label = "Instagram",
+                subtitle = "@md_ibrahim_kl",
+                painter = painterResource(id = R.drawable.ic_social_instagram),
+                badgeColor = Color(0xFFE1306C),
+                testTag = "developer_instagram_button",
+                onClick = { onOpenUrl(instagramUrl) }
+            )
+
+            DeveloperContactRow(
+                label = "Email",
+                subtitle = emailAddress,
+                iconVector = Icons.Filled.Email,
+                badgeColor = PrimaryPurple,
+                testTag = "developer_email_button",
+                onClick = { onOpenEmail(emailAddress) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeveloperContactRow(
+    label: String,
+    subtitle: String,
+    badgeColor: Color,
+    testTag: String,
+    onClick: () -> Unit,
+    painter: Painter? = null,
+    iconVector: ImageVector? = null
+) {
+    Surface(
+        color = StudioSecondaryBg,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, StudioBorder),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(badgeColor.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    painter != null -> Icon(
+                        painter = painter,
+                        contentDescription = label,
+                        tint = badgeColor,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    iconVector != null -> Icon(
+                        imageVector = iconVector,
+                        contentDescription = label,
+                        tint = AccentLavender,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = TextPrimary
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                contentDescription = "Open $label",
+                tint = TextSecondary,
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
 

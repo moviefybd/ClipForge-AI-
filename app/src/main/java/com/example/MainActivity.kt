@@ -114,6 +114,9 @@ fun ClipForgeApp(
                 onStartDownload = { viewModel.downloadVideoFromUrl(it) },
                 onCancelDownload = { viewModel.cancelUrlDownload() },
                 onResetState = { viewModel.resetUrlDownloadState() },
+                onOpenLocalPicker = {
+                    navController.navigate(ClipForgeRoute.LocalVideoPicker(route.nextTarget))
+                },
                 onContinueToTarget = {
                     if (route.nextTarget == "oneclick") {
                         navController.navigate(ClipForgeRoute.OneClickConvert)

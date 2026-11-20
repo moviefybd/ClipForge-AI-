@@ -14,6 +14,8 @@ import com.example.data.local.ProjectWorkspaceData
 import com.example.media.OverlayRenderer
 import com.example.media.SrtParser
 import com.example.media.VideoUrlDownloader
+import com.example.media.YouTubeLicenseChecker
+import com.example.media.YouTubeLicenseStatus
 import com.example.model.CropMode
 import com.example.model.CropSettings
 import com.example.model.SubtitleCue
@@ -88,15 +90,72 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `url validator accepts direct mp4 and rejects streaming platforms`() {
+    fun `url validator accepts direct mp4, routes youtube urls, and blocks other streaming platforms`() {
         val valid = VideoUrlDownloader.validateUrl("https://cdn.example.com/media/demo_video.mp4")
         assertTrue(valid is VideoUrlDownloader.ValidationResult.Valid)
 
         val youtube = VideoUrlDownloader.validateUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-        assertTrue(youtube is VideoUrlDownloader.ValidationResult.Invalid)
+        assertTrue(youtube is VideoUrlDownloader.ValidationResult.YouTube)
+        assertEquals("dQw4w9WgXcQ", (youtube as VideoUrlDownloader.ValidationResult.YouTube).videoId)
+
+        val shorts = VideoUrlDownloader.validateUrl("https://youtube.com/shorts/abcdefghijk")
+        assertTrue(shorts is VideoUrlDownloader.ValidationResult.YouTube)
+        assertEquals("abcdefghijk", (shorts as VideoUrlDownloader.ValidationResult.YouTube).videoId)
+
+        val tiktok = VideoUrlDownloader.validateUrl("https://www.tiktok.com/@creator/video/123456")
+        assertTrue(tiktok is VideoUrlDownloader.ValidationResult.Invalid)
 
         val empty = VideoUrlDownloader.validateUrl("   ")
         assertTrue(empty is VideoUrlDownloader.ValidationResult.Invalid)
+    }
+
+    @Test
+    fun `youtube license checker verifies creativeCommon and warns on standard or unclear license`() {
+        val ccJson = """
+            {
+              "items": [{
+                "snippet": {"title": "CC Nature Clip", "channelTitle": "Open Media"},
+                "status": {"license": "creativeCommon", "privacyStatus": "public"}
+              }]
+            }
+        """.trimIndent()
+        val ccRes = YouTubeLicenseChecker.parseYouTubeApiResponse(
+            videoId = "abcdefghijk",
+            watchUrl = "https://www.youtube.com/watch?v=abcdefghijk",
+            jsonBody = ccJson
+        )
+        assertEquals(YouTubeLicenseStatus.VERIFIED_CREATIVE_COMMONS, ccRes.licenseStatus)
+        assertEquals(YouTubeLicenseChecker.VERIFIED_MESSAGE, ccRes.message)
+
+        val stdJson = """
+            {
+              "items": [{
+                "snippet": {"title": "Standard Clip", "channelTitle": "Creator"},
+                "status": {"license": "youtube", "privacyStatus": "public"}
+              }]
+            }
+        """.trimIndent()
+        val stdRes = YouTubeLicenseChecker.parseYouTubeApiResponse(
+            videoId = "abcdefghijk",
+            watchUrl = "https://www.youtube.com/watch?v=abcdefghijk",
+            jsonBody = stdJson
+        )
+        assertEquals(YouTubeLicenseStatus.UNVERIFIED_OR_STANDARD, stdRes.licenseStatus)
+        assertEquals(YouTubeLicenseChecker.WARNING_MESSAGE, stdRes.message)
+    }
+
+    @Test
+    fun `settings screen renders developer section with profile and social links`() {
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("home_settings_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("settings_developer_section").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("MD Ibrahim Raj").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Junior Developer").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("developer_facebook_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("developer_instagram_button").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("developer_email_button").performScrollTo().assertIsDisplayed()
     }
 
     @Test

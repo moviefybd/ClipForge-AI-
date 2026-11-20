@@ -4,7 +4,7 @@ import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,6 +65,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -114,34 +116,14 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun ClipForgeLogoMark(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.size(36.dp)) {
-        val w = size.width
-        val h = size.height
-        drawRoundRect(
-            brush = Brush.linearGradient(listOf(PrimaryPurple, AccentLavender)),
-            cornerRadius = CornerRadius(w * 0.28f, w * 0.28f)
-        )
-        // Inner vertical 9:16 frame outline
-        val frameW = w * 0.44f
-        val frameH = h * 0.68f
-        val left = (w - frameW) / 2f
-        val top = (h - frameH) / 2f
-        drawRoundRect(
-            color = Color.White,
-            topLeft = Offset(left, top),
-            size = Size(frameW, frameH),
-            cornerRadius = CornerRadius(w * 0.1f, w * 0.1f),
-            alpha = 0.22f
-        )
-        // Play triangle
-        val play = Path().apply {
-            moveTo(w * 0.42f, h * 0.34f)
-            lineTo(w * 0.67f, h * 0.50f)
-            lineTo(w * 0.42f, h * 0.66f)
-            close()
-        }
-        drawPath(play, color = Color.White)
-    }
+    Image(
+        painter = painterResource(id = R.drawable.ic_launcher_logo),
+        contentDescription = "ClipForge AI logo",
+        contentScale = ContentScale.Crop,
+        modifier = modifier
+            .size(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+    )
 }
 
 @kotlin.OptIn(ExperimentalMaterial3Api::class)

@@ -20,6 +20,8 @@ import com.example.media.SrtParser
 import com.example.media.VideoMetadataHelper
 import com.example.media.VideoProcessingEngine
 import com.example.media.VideoUrlDownloader
+import com.example.media.YouTubeLicenseChecker
+import com.example.media.YouTubeLicenseStatus
 import com.example.model.AiAnalysisState
 import com.example.model.AppSettings
 import com.example.model.CropMode
@@ -173,53 +175,80 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun downloadVideoFromUrl(rawUrl: String) {
-        val validation = VideoUrlDownloader.validateUrl(rawUrl)
-        if (validation is VideoUrlDownloader.ValidationResult.Invalid) {
-            _urlDownloadState.value = UrlDownloadState.Error(validation.reason)
-            return
-        }
-        val validUrl = (validation as VideoUrlDownloader.ValidationResult.Valid).normalizedUrl
-        urlJob?.cancel()
-        urlJob = viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            _urlDownloadState.value = UrlDownloadState.Validating(validUrl)
-            val downloadResult = VideoUrlDownloader.downloadDirectVideo(
-                context = ctx,
-                url = validUrl,
-                onProgress = { pct, downloadedMb, totalMb ->
-                    _urlDownloadState.value = UrlDownloadState.Downloading(pct, downloadedMb, totalMb)
+        when (val validation = VideoUrlDownloader.validateUrl(rawUrl)) {
+            is VideoUrlDownloader.ValidationResult.Invalid -> {
+                _urlDownloadState.value = UrlDownloadState.Error(validation.reason)
+                return
+            }
+
+            is VideoUrlDownloader.ValidationResult.YouTube -> {
+                urlJob?.cancel()
+                urlJob = viewModelScope.launch {
+                    val ctx = getApplication<Application>()
+                    val canonicalUrl = YouTubeLicenseChecker.canonicalWatchUrl(validation.videoId)
+                    _urlDownloadState.value = UrlDownloadState.CheckingYouTubeLicense(canonicalUrl)
+                    val licenseResult = YouTubeLicenseChecker.checkVideoLicense(ctx, validation.normalizedUrl)
+                    licenseResult.onSuccess { info ->
+                        _urlDownloadState.value =
+                            if (info.licenseStatus == YouTubeLicenseStatus.VERIFIED_CREATIVE_COMMONS) {
+                                UrlDownloadState.YouTubeLicenseVerified(info)
+                            } else {
+                                UrlDownloadState.YouTubePermissionWarning(info)
+                            }
+                    }.onFailure { err ->
+                        _urlDownloadState.value = UrlDownloadState.Error(
+                            err.localizedMessage ?: "Unable to verify YouTube video license metadata."
+                        )
+                    }
                 }
-            )
-            downloadResult.onSuccess { file ->
-                val uri = Uri.fromFile(file)
-                val metaResult = VideoMetadataHelper.extractMetadata(ctx, uri)
-                metaResult.onSuccess { meta ->
-                    val currentSettings = settings.value
-                    _editorState.value = ActiveEditorState(
-                        projectId = 0L,
-                        projectName = meta.title.substringBeforeLast('.').ifBlank { "URL Short" },
-                        metadata = meta,
-                        clipStartMs = 0L,
-                        clipEndMs = meta.durationMs,
-                        targetClipDurationSec = currentSettings.defaultClipDurationSec,
-                        cropSettings = CropSettings(mode = currentSettings.defaultCropMode),
-                        watermarkConfig = WatermarkConfig(text = currentSettings.defaultWatermarkText)
+                return
+            }
+
+            is VideoUrlDownloader.ValidationResult.Valid -> {
+                val validUrl = validation.normalizedUrl
+                urlJob?.cancel()
+                urlJob = viewModelScope.launch {
+                    val ctx = getApplication<Application>()
+                    _urlDownloadState.value = UrlDownloadState.Validating(validUrl)
+                    val downloadResult = VideoUrlDownloader.downloadDirectVideo(
+                        context = ctx,
+                        url = validUrl,
+                        onProgress = { pct, downloadedMb, totalMb ->
+                            _urlDownloadState.value = UrlDownloadState.Downloading(pct, downloadedMb, totalMb)
+                        }
                     )
-                    _aiState.value = AiAnalysisState.Idle
-                    _subtitleGenState.value = SubtitleGenState.Idle
-                    _urlDownloadState.value = UrlDownloadState.Completed(file.absolutePath, meta)
-                    _cacheSizeBytes.value = calculateCacheBytes()
-                    saveCurrentProjectSilently()
-                }.onFailure { err ->
-                    file.delete()
-                    _urlDownloadState.value = UrlDownloadState.Error(
-                        err.localizedMessage ?: "Downloaded file is not a valid video."
-                    )
+                    downloadResult.onSuccess { file ->
+                        val uri = Uri.fromFile(file)
+                        val metaResult = VideoMetadataHelper.extractMetadata(ctx, uri)
+                        metaResult.onSuccess { meta ->
+                            val currentSettings = settings.value
+                            _editorState.value = ActiveEditorState(
+                                projectId = 0L,
+                                projectName = meta.title.substringBeforeLast('.').ifBlank { "URL Short" },
+                                metadata = meta,
+                                clipStartMs = 0L,
+                                clipEndMs = meta.durationMs,
+                                targetClipDurationSec = currentSettings.defaultClipDurationSec,
+                                cropSettings = CropSettings(mode = currentSettings.defaultCropMode),
+                                watermarkConfig = WatermarkConfig(text = currentSettings.defaultWatermarkText)
+                            )
+                            _aiState.value = AiAnalysisState.Idle
+                            _subtitleGenState.value = SubtitleGenState.Idle
+                            _urlDownloadState.value = UrlDownloadState.Completed(file.absolutePath, meta)
+                            _cacheSizeBytes.value = calculateCacheBytes()
+                            saveCurrentProjectSilently()
+                        }.onFailure { err ->
+                            file.delete()
+                            _urlDownloadState.value = UrlDownloadState.Error(
+                                err.localizedMessage ?: "Downloaded file is not a valid video."
+                            )
+                        }
+                    }.onFailure { err ->
+                        _urlDownloadState.value = UrlDownloadState.Error(
+                            err.localizedMessage ?: "Failed to download video from URL."
+                        )
+                    }
                 }
-            }.onFailure { err ->
-                _urlDownloadState.value = UrlDownloadState.Error(
-                    err.localizedMessage ?: "Failed to download video from URL."
-                )
             }
         }
     }
