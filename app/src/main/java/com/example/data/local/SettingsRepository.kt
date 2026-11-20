@@ -2,9 +2,11 @@ package com.example.data.local
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -12,9 +14,13 @@ import com.example.model.AppSettings
 import com.example.model.CropMode
 import com.example.model.SubtitleLanguage
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "clipforge_settings")
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "clipforge_settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() }
+)
 
 class SettingsRepository(private val context: Context) {
     private object Keys {
@@ -26,20 +32,22 @@ class SettingsRepository(private val context: Context) {
         val AUTO_CLEANUP_TEMP = booleanPreferencesKey("auto_cleanup_temp")
     }
 
-    val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
-        AppSettings(
-            defaultClipDurationSec = prefs[Keys.DEFAULT_CLIP_DURATION] ?: 30,
-            defaultCropMode = prefs[Keys.DEFAULT_CROP_MODE]?.let { name ->
-                CropMode.entries.firstOrNull { it.name == name }
-            } ?: CropMode.CENTER_CROP,
-            defaultSubtitleLanguage = prefs[Keys.DEFAULT_SUBTITLE_LANG]?.let { name ->
-                SubtitleLanguage.entries.firstOrNull { it.name == name }
-            } ?: SubtitleLanguage.ENGLISH,
-            defaultWatermarkText = prefs[Keys.DEFAULT_WATERMARK_TEXT] ?: "ClipForge AI",
-            notifyOnExportComplete = prefs[Keys.NOTIFY_EXPORT_COMPLETE] ?: true,
-            autoCleanupTempFiles = prefs[Keys.AUTO_CLEANUP_TEMP] ?: true
-        )
-    }
+    val settingsFlow: Flow<AppSettings> = context.dataStore.data
+        .catch { emit(emptyPreferences()) }
+        .map { prefs ->
+            AppSettings(
+                defaultClipDurationSec = prefs[Keys.DEFAULT_CLIP_DURATION] ?: 30,
+                defaultCropMode = prefs[Keys.DEFAULT_CROP_MODE]?.let { name ->
+                    CropMode.entries.firstOrNull { it.name == name }
+                } ?: CropMode.CENTER_CROP,
+                defaultSubtitleLanguage = prefs[Keys.DEFAULT_SUBTITLE_LANG]?.let { name ->
+                    SubtitleLanguage.entries.firstOrNull { it.name == name }
+                } ?: SubtitleLanguage.ENGLISH,
+                defaultWatermarkText = prefs[Keys.DEFAULT_WATERMARK_TEXT] ?: "ClipForge AI",
+                notifyOnExportComplete = prefs[Keys.NOTIFY_EXPORT_COMPLETE] ?: true,
+                autoCleanupTempFiles = prefs[Keys.AUTO_CLEANUP_TEMP] ?: true
+            )
+        }
 
     suspend fun updateDefaultClipDuration(seconds: Int) {
         context.dataStore.edit { it[Keys.DEFAULT_CLIP_DURATION] = seconds.coerceIn(5, 180) }

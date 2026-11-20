@@ -24,7 +24,11 @@ abstract class ClipForgeDatabase : RoomDatabase() {
                     context.applicationContext,
                     ClipForgeDatabase::class.java,
                     "clipforge_studio.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }

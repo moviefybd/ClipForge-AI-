@@ -82,7 +82,7 @@ object YouTubeLicenseChecker {
             }
 
             val watchUrl = canonicalWatchUrl(videoId)
-            val apiKey = BuildConfig.YOUTUBE_API_KEY.trim()
+            val apiKey = optionalYouTubeApiKey()
             val hasApiKey = apiKey.isNotEmpty() && apiKey != PLACEHOLDER_KEY
 
             if (hasApiKey) {
@@ -97,6 +97,10 @@ object YouTubeLicenseChecker {
             fetchFromOEmbed(videoId, watchUrl, apiKeyConfigured = hasApiKey)
         }
     }
+
+    private fun optionalYouTubeApiKey(): String = runCatching {
+        BuildConfig::class.java.getField("YOUTUBE_API_KEY").get(null) as? String
+    }.getOrNull()?.trim().orEmpty()
 
     private fun fetchFromYouTubeDataApi(
         videoId: String,
@@ -223,7 +227,7 @@ object YouTubeLicenseChecker {
         val note = if (apiKeyConfigured) {
             "YouTube Data API v3 did not return verified Creative Commons license metadata for this video."
         } else {
-            "Public YouTube metadata does not verify Creative Commons license status (configure YOUTUBE_API_KEY in Secrets for full YouTube Data API v3 license lookup)."
+            "Public YouTube metadata identified this video, but license reuse permission could not be verified."
         }
 
         return YouTubeMetadataResult(

@@ -134,7 +134,8 @@ object AudioSegmentExtractor {
 
         return try {
             if (uri.scheme == "file") {
-                extractor.setDataSource(uri.path!!)
+                val path = uri.path ?: return null
+                extractor.setDataSource(path)
             } else {
                 extractor.setDataSource(context, uri, null)
             }

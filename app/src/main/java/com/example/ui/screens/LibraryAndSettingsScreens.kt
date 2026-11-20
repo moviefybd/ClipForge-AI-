@@ -240,12 +240,14 @@ fun MyProjectsScreen(
                                 }
                                 OutlinedButton(
                                     onClick = {
-                                        val share = MediaStoreExporter.buildShareIntent(
-                                            context,
-                                            project.latestExportUri,
-                                            project.name
-                                        )
-                                        context.startActivity(share)
+                                        runCatching {
+                                            val share = MediaStoreExporter.buildShareIntent(
+                                                context,
+                                                project.latestExportUri,
+                                                project.name
+                                            )
+                                            context.startActivity(share)
+                                        }
                                     }
                                 ) {
                                     Icon(Icons.Filled.Share, contentDescription = "Share export", modifier = Modifier.size(16.dp))
@@ -396,12 +398,14 @@ fun ExportHistoryScreen(
                                 }
                                 OutlinedButton(
                                     onClick = {
-                                        val share = MediaStoreExporter.buildShareIntent(
-                                            context,
-                                            record.outputUri,
-                                            record.title
-                                        )
-                                        context.startActivity(share)
+                                        runCatching {
+                                            val share = MediaStoreExporter.buildShareIntent(
+                                                context,
+                                                record.outputUri,
+                                                record.title
+                                            )
+                                            context.startActivity(share)
+                                        }
                                     },
                                     modifier = Modifier.weight(1f)
                                 ) {

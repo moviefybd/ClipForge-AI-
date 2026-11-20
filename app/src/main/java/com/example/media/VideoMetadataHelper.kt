@@ -184,6 +184,11 @@ object VideoMetadataHelper {
                 val scaled = Bitmap.createScaledBitmap(raw, evenW.coerceAtMost(640), evenH.coerceAtMost(640), true)
                 val w = (scaled.width / 2) * 2
                 val h = (scaled.height / 2) * 2
+                if (w <= 0 || h <= 0) {
+                    if (raw !== scaled) raw.recycle()
+                    scaled.recycle()
+                    continue
+                }
                 val rgb565 = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
                 val canvas = android.graphics.Canvas(rgb565)
                 canvas.drawBitmap(scaled, 0f, 0f, null)
@@ -239,7 +244,8 @@ object VideoMetadataHelper {
         val extractor = MediaExtractor()
         return try {
             if (uri.scheme == "file") {
-                extractor.setDataSource(uri.path!!)
+                val path = uri.path ?: return 30f
+                extractor.setDataSource(path)
             } else {
                 extractor.setDataSource(context, uri, null)
             }

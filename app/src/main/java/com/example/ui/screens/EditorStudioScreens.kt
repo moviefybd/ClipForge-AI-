@@ -101,6 +101,7 @@ import com.example.ui.theme.StudioCardElevated
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.ActiveEditorState
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -160,7 +161,8 @@ fun VideoEditorScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .testTag("video_editor_list"),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -201,9 +203,11 @@ fun VideoEditorScreen(
                         }
                         Spacer(Modifier.height(8.dp))
                         val durFloat = meta.durationMs.toFloat().coerceAtLeast(2000f)
+                        val minSpan = minOf(1000f, durFloat * 0.5f)
+                        val safeStartF = editorState.clipStartMs.toFloat().coerceIn(0f, (durFloat - minSpan).coerceAtLeast(0f))
+                        val safeEndF = editorState.clipEndMs.toFloat().coerceIn((safeStartF + minSpan).coerceAtMost(durFloat), durFloat)
                         RangeSlider(
-                            value = editorState.clipStartMs.toFloat()..editorState.clipEndMs.toFloat()
-                                .coerceIn(editorState.clipStartMs.toFloat() + 1000f, durFloat),
+                            value = safeStartF..safeEndF,
                             onValueChange = { range ->
                                 onUpdateTrimRange(range.start.toLong(), range.endInclusive.toLong())
                             },
@@ -250,7 +254,7 @@ fun VideoEditorScreen(
                         ) {
                             Spacer(Modifier.height(12.dp))
                             Text(
-                                text = "Manual Pan X (${String.format("%.2f", editorState.cropSettings.manualPanX)}) • Zoom (${String.format("%.1fx", editorState.cropSettings.zoom)})",
+                                text = "Manual Pan X (${String.format(Locale.US, "%.2f", editorState.cropSettings.manualPanX)}) • Zoom (${String.format(Locale.US, "%.1fx", editorState.cropSettings.zoom)})",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = AccentLavender
                             )
@@ -362,6 +366,7 @@ fun SubtitleEditorScreen(
     var currentPlaybackPosMs by remember { mutableLongStateOf(0L) }
     var editingCue by remember { mutableStateOf<SubtitleCue?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var srtLauncherError by remember { mutableStateOf<String?>(null) }
 
     val importSrtLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -407,7 +412,8 @@ fun SubtitleEditorScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .testTag("subtitle_editor_list"),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -493,13 +499,25 @@ fun SubtitleEditorScreen(
                             ErrorBanner(message = subtitleGenState.message)
                         }
 
+                        if (srtLauncherError != null) {
+                            Spacer(Modifier.height(10.dp))
+                            ErrorBanner(message = srtLauncherError, onDismiss = { srtLauncherError = null })
+                        }
+
                         Spacer(Modifier.height(12.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedButton(
-                                onClick = { importSrtLauncher.launch(arrayOf("*/*")) },
+                                onClick = {
+                                    srtLauncherError = null
+                                    runCatching { importSrtLauncher.launch(arrayOf("*/*")) }
+                                        .onFailure {
+                                            srtLauncherError = it.localizedMessage
+                                                ?: "No document picker available for SRT import."
+                                        }
+                                },
                                 modifier = Modifier.weight(1f).testTag("import_srt_btn")
                             ) {
                                 Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -508,8 +526,13 @@ fun SubtitleEditorScreen(
                             }
                             OutlinedButton(
                                 onClick = {
+                                    srtLauncherError = null
                                     val base = editorState.projectName.replace(" ", "_")
-                                    exportSrtLauncher.launch("$base.srt")
+                                    runCatching { exportSrtLauncher.launch("$base.srt") }
+                                        .onFailure {
+                                            srtLauncherError = it.localizedMessage
+                                                ?: "No document saver available for SRT export."
+                                        }
                                 },
                                 enabled = editorState.subtitleCues.isNotEmpty(),
                                 modifier = Modifier.weight(1f).testTag("export_srt_btn")
@@ -736,8 +759,8 @@ private fun SubtitleCueEditDialog(
     onSave: (Long, Long, String) -> Unit
 ) {
     var text by remember { mutableStateOf(initialText) }
-    var startSec by remember { mutableStateOf(String.format("%.2f", initialStartMs / 1000.0)) }
-    var endSec by remember { mutableStateOf(String.format("%.2f", initialEndMs / 1000.0)) }
+    var startSec by remember { mutableStateOf(String.format(Locale.US, "%.2f", initialStartMs / 1000.0)) }
+    var endSec by remember { mutableStateOf(String.format(Locale.US, "%.2f", initialEndMs / 1000.0)) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -796,6 +819,7 @@ fun WatermarkEditorScreen(
     onBack: () -> Unit
 ) {
     val wm = editorState.watermarkConfig
+    var pngPickerError by remember { mutableStateOf<String?>(null) }
     val pngPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -825,7 +849,8 @@ fun WatermarkEditorScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .testTag("watermark_editor_list"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -934,11 +959,21 @@ fun WatermarkEditorScreen(
                             onSelect = { hex -> onUpdateWatermark { it.copy(textColorHex = hex) } }
                         )
                     } else {
+                        if (pngPickerError != null) {
+                            ErrorBanner(message = pngPickerError, onDismiss = { pngPickerError = null })
+                            Spacer(Modifier.height(8.dp))
+                        }
                         Button(
                             onClick = {
-                                pngPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
+                                pngPickerError = null
+                                runCatching {
+                                    pngPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                    )
+                                }.onFailure { err ->
+                                    pngPickerError = err.localizedMessage
+                                        ?: "Image picker is unavailable on this device."
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple),
                             modifier = Modifier

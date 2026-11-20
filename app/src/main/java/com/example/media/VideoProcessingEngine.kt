@@ -82,26 +82,30 @@ class VideoProcessingEngine(private val context: Context) {
 
         val backdropFile: File? = if (request.cropSettings.mode == CropMode.BLUR_BACKGROUND) {
             withContext(Dispatchers.IO) {
-                val sampleBitmap = VideoMetadataHelper.extractSampleFrameBitmap(
-                    context,
-                    request.sourceUriString,
-                    (request.startMs + (request.endMs - request.startMs) / 3L)
-                )
-                val backdrop = OverlayRenderer.createBlurredBackdropBitmap(
-                    sampleBitmap,
-                    request.targetWidth,
-                    request.targetHeight
-                )
-                sampleBitmap?.recycle()
-                val f = File(tempDir, "blur_bg_${System.currentTimeMillis()}.png")
-                FileOutputStream(f).use { backdrop.compress(Bitmap.CompressFormat.PNG, 92, it) }
-                backdrop.recycle()
-                f
+                runCatching {
+                    val sampleBitmap = VideoMetadataHelper.extractSampleFrameBitmap(
+                        context,
+                        request.sourceUriString,
+                        (request.startMs + (request.endMs - request.startMs) / 3L)
+                    )
+                    val backdrop = OverlayRenderer.createBlurredBackdropBitmap(
+                        sampleBitmap,
+                        request.targetWidth,
+                        request.targetHeight
+                    )
+                    sampleBitmap?.let { if (!it.isRecycled) it.recycle() }
+                    val f = File(tempDir, "blur_bg_${System.currentTimeMillis()}.png")
+                    FileOutputStream(f).use { backdrop.compress(Bitmap.CompressFormat.PNG, 92, it) }
+                    if (!backdrop.isRecycled) backdrop.recycle()
+                    f
+                }.getOrNull()
             }
         } else null
 
         val watermarkBitmap = withContext(Dispatchers.IO) {
-            OverlayRenderer.renderWatermarkBitmap(context, request.watermarkConfig, request.targetWidth)
+            runCatching {
+                OverlayRenderer.renderWatermarkBitmap(context, request.watermarkConfig, request.targetWidth)
+            }.getOrNull()
         }
 
         val overlayEffects = buildList<Effect> {
@@ -182,7 +186,7 @@ class VideoProcessingEngine(private val context: Context) {
                         override fun onCompleted(composition: Composition, result: ExportResult) {
                             activeTransformer = null
                             backdropFile?.delete()
-                            watermarkBitmap?.recycle()
+                            watermarkBitmap?.let { if (!it.isRecycled) it.recycle() }
                             if (outputFile.exists() && outputFile.length() > 0L) {
                                 onProgress(100, "Finalizing MP4...")
                                 if (continuation.isActive) continuation.resume(Result.success(outputFile))
@@ -202,7 +206,7 @@ class VideoProcessingEngine(private val context: Context) {
                         ) {
                             activeTransformer = null
                             backdropFile?.delete()
-                            watermarkBitmap?.recycle()
+                            watermarkBitmap?.let { if (!it.isRecycled) it.recycle() }
                             outputFile.delete()
                             Log.e(TAG, "Transformer export error", exception)
                             val readable = when (exception.errorCode) {
@@ -348,7 +352,7 @@ class VideoProcessingEngine(private val context: Context) {
                 } catch (e: Exception) {
                     activeTransformer = null
                     backdropFile?.delete()
-                    watermarkBitmap?.recycle()
+                    watermarkBitmap?.let { if (!it.isRecycled) it.recycle() }
                     outputFile.delete()
                     Log.e(TAG, "Failed starting Transformer", e)
                     if (continuation.isActive) {
@@ -409,33 +413,49 @@ class VideoProcessingEngine(private val context: Context) {
         private val emptyBitmap: Bitmap by lazy {
             Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
         }
+        private val allocatedBitmaps = mutableListOf<Bitmap>()
         private var cachedCueIndex: Int = -2
         private var cachedBitmap: Bitmap? = null
 
         override fun getBitmap(presentationTimeUs: Long): Bitmap {
             val timeMs = presentationTimeUs / 1000L
             val activeIdx = cues.indexOfFirst { timeMs in it.startMs..it.endMs }
-            if (activeIdx == cachedCueIndex && cachedBitmap != null) {
-                return cachedBitmap!!
+            val current = cachedBitmap
+            if (activeIdx == cachedCueIndex && current != null && !current.isRecycled) {
+                return current
             }
             cachedCueIndex = activeIdx
             val nextBitmap = if (activeIdx >= 0) {
-                OverlayRenderer.renderSubtitleOverlayBitmap(
-                    context = context,
-                    text = cues[activeIdx].text,
-                    style = style,
-                    frameWidth = frameWidth,
-                    frameHeight = frameHeight
-                )
+                runCatching {
+                    OverlayRenderer.renderSubtitleOverlayBitmap(
+                        context = context,
+                        text = cues[activeIdx].text,
+                        style = style,
+                        frameWidth = frameWidth,
+                        frameHeight = frameHeight
+                    )
+                }.onSuccess { bmp ->
+                    if (bmp !== emptyBitmap) {
+                        allocatedBitmaps.add(bmp)
+                    }
+                }.getOrElse {
+                    emptyBitmap
+                }
             } else {
                 emptyBitmap
             }
-            val old = cachedBitmap
             cachedBitmap = nextBitmap
-            if (old != null && old !== emptyBitmap && old !== nextBitmap) {
-                old.recycle()
-            }
             return nextBitmap
+        }
+
+        override fun release() {
+            runCatching { super.release() }
+            cachedBitmap = null
+            allocatedBitmaps.forEach { bmp ->
+                runCatching { if (!bmp.isRecycled) bmp.recycle() }
+            }
+            allocatedBitmaps.clear()
+            runCatching { if (!emptyBitmap.isRecycled) emptyBitmap.recycle() }
         }
     }
 }

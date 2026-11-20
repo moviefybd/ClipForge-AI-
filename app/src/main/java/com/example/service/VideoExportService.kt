@@ -13,6 +13,8 @@ import com.example.media.MediaStoreExporter
 
 class VideoExportService : Service() {
 
+    private var isForegroundStarted = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -21,28 +23,59 @@ class VideoExportService : Service() {
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: "Exporting Short"
                 val progress = intent.getIntExtra(EXTRA_PROGRESS, 0)
                 val notification = buildNotification(title, progress)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
+                runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(
+                            NOTIFICATION_ID,
+                            notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                        )
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
+                    isForegroundStarted = true
+                }
+                if (stopRequested.getAndSet(false)) {
+                    runCatching {
+                        if (isForegroundStarted) {
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            isForegroundStarted = false
+                        }
+                    }
+                    stopSelf()
                 }
             }
             ACTION_UPDATE -> {
                 val title = intent.getStringExtra(EXTRA_TITLE) ?: "Exporting Short"
                 val progress = intent.getIntExtra(EXTRA_PROGRESS, 0)
-                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.notify(NOTIFICATION_ID, buildNotification(title, progress))
+                runCatching {
+                    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                    manager?.notify(NOTIFICATION_ID, buildNotification(title, progress))
+                }
             }
-            ACTION_STOP -> {
-                stopForeground(STOP_FOREGROUND_REMOVE)
+            ACTION_STOP, null -> {
+                stopRequested.set(false)
+                runCatching {
+                    if (isForegroundStarted) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        isForegroundStarted = false
+                    }
+                }
                 stopSelf()
             }
         }
         return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        stopRequested.set(false)
+        runCatching {
+            if (isForegroundStarted) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                isForegroundStarted = false
+            }
+        }
+        super.onDestroy()
     }
 
     private fun buildNotification(title: String, progress: Int): Notification {
@@ -59,6 +92,7 @@ class VideoExportService : Service() {
 
     companion object {
         private const val NOTIFICATION_ID = 4101
+        private val stopRequested = java.util.concurrent.atomic.AtomicBoolean(false)
         const val ACTION_START = "com.example.action.EXPORT_START"
         const val ACTION_UPDATE = "com.example.action.EXPORT_UPDATE"
         const val ACTION_STOP = "com.example.action.EXPORT_STOP"
@@ -66,6 +100,7 @@ class VideoExportService : Service() {
         const val EXTRA_PROGRESS = "extra_progress"
 
         fun start(context: Context, title: String) {
+            stopRequested.set(false)
             val intent = Intent(context, VideoExportService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_TITLE, title)
@@ -81,6 +116,7 @@ class VideoExportService : Service() {
         }
 
         fun updateProgress(context: Context, title: String, progress: Int) {
+            if (stopRequested.get()) return
             val intent = Intent(context, VideoExportService::class.java).apply {
                 action = ACTION_UPDATE
                 putExtra(EXTRA_TITLE, title)
@@ -90,10 +126,14 @@ class VideoExportService : Service() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, VideoExportService::class.java).apply {
+            stopRequested.set(true)
+            val stopIntent = Intent(context, VideoExportService::class.java).apply {
                 action = ACTION_STOP
             }
-            runCatching { context.startService(intent) }
+            runCatching { context.startService(stopIntent) }
+                .onFailure {
+                    runCatching { context.stopService(Intent(context, VideoExportService::class.java)) }
+                }
         }
     }
 }

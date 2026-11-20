@@ -79,25 +79,27 @@ object OverlayRenderer {
 
             WatermarkType.IMAGE -> {
                 val uriStr = config.imageUriString ?: return null
-                val raw = context.contentResolver.openInputStream(Uri.parse(uriStr))?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
-                } ?: return null
+                return runCatching {
+                    val raw = context.contentResolver.openInputStream(Uri.parse(uriStr))?.use { stream ->
+                        BitmapFactory.decodeStream(stream)
+                    } ?: return@runCatching null
 
-                val targetPx = (config.imageSizeDp * scaleFactor).roundToInt().coerceIn(48, 520)
-                val ratio = raw.height.toFloat() / raw.width.toFloat().coerceAtLeast(1f)
-                val w = targetPx
-                val h = (targetPx * ratio).roundToInt().coerceAtLeast(1)
-                val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
-                if (scaled !== raw) raw.recycle()
+                    val targetPx = (config.imageSizeDp * scaleFactor).roundToInt().coerceIn(48, 520)
+                    val ratio = raw.height.toFloat() / raw.width.toFloat().coerceAtLeast(1f)
+                    val w = targetPx
+                    val h = (targetPx * ratio).roundToInt().coerceAtLeast(1)
+                    val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
+                    if (scaled !== raw) raw.recycle()
 
-                val output = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(output)
-                val alphaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    alpha = (config.opacity.coerceIn(0.05f, 1f) * 255).roundToInt()
-                }
-                canvas.drawBitmap(scaled, 0f, 0f, alphaPaint)
-                scaled.recycle()
-                output
+                    val output = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(output)
+                    val alphaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        alpha = (config.opacity.coerceIn(0.05f, 1f) * 255).roundToInt()
+                    }
+                    canvas.drawBitmap(scaled, 0f, 0f, alphaPaint)
+                    scaled.recycle()
+                    output
+                }.getOrNull()
             }
         }
     }
@@ -113,12 +115,14 @@ object OverlayRenderer {
         frameWidth: Int = 1080,
         frameHeight: Int = 1920
     ): Bitmap {
-        val bmp = Bitmap.createBitmap(frameWidth, frameHeight, Bitmap.Config.ARGB_8888)
+        val safeW = frameWidth.coerceAtLeast(16)
+        val safeH = frameHeight.coerceAtLeast(16)
+        val bmp = Bitmap.createBitmap(safeW, safeH, Bitmap.Config.ARGB_8888)
         if (text.isBlank()) return bmp
 
         val canvas = Canvas(bmp)
-        val scaleFactor = frameWidth / 360f
-        val maxTextWidth = (frameWidth * 0.84f).roundToInt()
+        val scaleFactor = safeW / 360f
+        val maxTextWidth = (safeW * 0.84f).roundToInt().coerceAtLeast(1)
 
         val typeface = when (style.fontFamily) {
             SubtitleFontFamily.SANS -> ResourcesCompat.getFont(context, R.font.plus_jakarta_sans) ?: Typeface.SANS_SERIF
@@ -152,15 +156,15 @@ object OverlayRenderer {
             .setIncludePad(true)
             .build()
 
-        val textLeft = (frameWidth - maxTextWidth) / 2f
+        val textLeft = (safeW - maxTextWidth) / 2f
         val textTop = when (style.position) {
-            SubtitlePosition.TOP -> frameHeight * 0.14f
-            SubtitlePosition.CENTER -> (frameHeight - layout.height) / 2f
-            SubtitlePosition.BOTTOM -> frameHeight * 0.78f - layout.height
-        }.coerceIn(48f, (frameHeight - layout.height - 48f).coerceAtLeast(48f))
+            SubtitlePosition.TOP -> safeH * 0.14f
+            SubtitlePosition.CENTER -> (safeH - layout.height) / 2f
+            SubtitlePosition.BOTTOM -> safeH * 0.78f - layout.height
+        }.coerceIn(48f, (safeH - layout.height - 48f).coerceAtLeast(48f))
 
         // Background pill
-        if (style.backgroundAlpha > 0.02f) {
+        if (layout.lineCount > 0 && style.backgroundAlpha > 0.02f) {
             var minLineLeft = Float.MAX_VALUE
             var maxLineRight = 0f
             for (i in 0 until layout.lineCount) {
@@ -181,10 +185,12 @@ object OverlayRenderer {
             val rect = RectF(
                 (textLeft + minLineLeft - padX).coerceAtLeast(24f),
                 (textTop - padY).coerceAtLeast(24f),
-                (textLeft + maxLineRight + padX).coerceAtMost(frameWidth - 24f),
-                (textTop + layout.height + padY).coerceAtMost(frameHeight - 24f)
+                (textLeft + maxLineRight + padX).coerceAtMost(safeW - 24f),
+                (textTop + layout.height + padY).coerceAtMost(safeH - 24f)
             )
-            canvas.drawRoundRect(rect, 14f * scaleFactor, 14f * scaleFactor, bgPaint)
+            if (rect.right > rect.left && rect.bottom > rect.top) {
+                canvas.drawRoundRect(rect, 14f * scaleFactor, 14f * scaleFactor, bgPaint)
+            }
         }
 
         canvas.save()

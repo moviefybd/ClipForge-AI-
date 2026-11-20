@@ -1,16 +1,20 @@
 package com.example
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.core.content.ContextCompat
+import androidx.core.content.res.ResourcesCompat
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.ClipForgeDatabase
 import com.example.data.local.ProjectRepository
 import com.example.data.local.ProjectWorkspaceData
+import com.example.media.MediaStoreExporter
 import com.example.media.OverlayRenderer
 import com.example.media.SrtParser
 import com.example.media.VideoUrlDownloader
@@ -23,6 +27,7 @@ import com.example.model.SubtitleStyle
 import com.example.model.VideoMetadata
 import com.example.model.WatermarkConfig
 import com.example.model.WatermarkPosition
+import com.example.ui.viewmodel.ClipForgeViewModel
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -48,7 +53,21 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `home dashboard renders all 6 studio cards and navigates`() {
+    fun `launcher icons, drawables, and custom fonts load without error`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assertNotNull(ContextCompat.getDrawable(context, R.mipmap.ic_launcher))
+        assertNotNull(ContextCompat.getDrawable(context, R.mipmap.ic_launcher_round))
+        assertNotNull(ContextCompat.getDrawable(context, R.drawable.ic_launcher_logo))
+        assertNotNull(ContextCompat.getDrawable(context, R.drawable.developer_avatar))
+        assertNotNull(ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground))
+        assertNotNull(ContextCompat.getDrawable(context, R.drawable.ic_launcher_background))
+        assertNotNull(ResourcesCompat.getFont(context, R.font.space_grotesk))
+        assertNotNull(ResourcesCompat.getFont(context, R.font.plus_jakarta_sans))
+        assertNotNull(ResourcesCompat.getFont(context, R.font.jetbrains_mono))
+    }
+
+    @Test
+    fun `home dashboard renders all 6 studio cards and navigates across all primary routes`() {
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithText("Create Amazing Shorts").assertIsDisplayed()
@@ -59,18 +78,88 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithTag("card_projects").assertIsDisplayed()
         composeTestRule.onNodeWithTag("card_history").assertIsDisplayed()
 
-        // Navigate to AI Shorts Generator
+        // Navigate to AI Shorts Generator -> URL Input -> Back -> Local Picker -> Back -> Home
         composeTestRule.onNodeWithTag("card_ai_shorts").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("ai_shorts_local_button").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("ai_shorts_url_button").assertIsDisplayed()
-
-        // Navigate back and open Watermark Studio
+        composeTestRule.onNodeWithTag("ai_shorts_url_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("video_url_textfield").assertIsDisplayed()
         composeTestRule.onNodeWithTag("nav_back_button").performClick()
         composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("ai_shorts_local_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("launch_photo_picker_video").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // One-Click 9:16
+        composeTestRule.onNodeWithTag("card_one_click").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Subtitle Studio
+        composeTestRule.onNodeWithTag("card_subtitles").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Watermark Studio
         composeTestRule.onNodeWithTag("card_watermark").performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("watermark_enable_switch").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // My Projects
+        composeTestRule.onNodeWithTag("card_projects").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // Export History
+        composeTestRule.onNodeWithTag("card_history").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+
+        // About & Privacy
+        composeTestRule.onNodeWithTag("home_privacy_button").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("privacy_delete_data_btn").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("nav_back_button").performClick()
+        composeTestRule.waitForIdle()
+    }
+
+    @Test
+    fun `updateTrimRange handles edge-case and sub-second durations without IllegalArgumentException`() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = ClipForgeViewModel(app)
+        vm.updateTrimRange(500L, 1200L)
+        vm.updateTrimRange(90_000L, 100L)
+        val state = vm.editorState.value
+        assertTrue(state.clipEndMs >= state.clipStartMs)
+    }
+
+    @Test
+    fun `buildShareIntent handles content and external file URIs safely`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val contentChooser = MediaStoreExporter.buildShareIntent(
+            context,
+            "content://media/external/video/media/42",
+            "My Short"
+        )
+        assertEquals(Intent.ACTION_CHOOSER, contentChooser.action)
+
+        val unmappedFileChooser = MediaStoreExporter.buildShareIntent(
+            context,
+            "file:///sdcard/Download/outside_root.mp4",
+            "Fallback Share"
+        )
+        assertEquals(Intent.ACTION_CHOOSER, unmappedFileChooser.action)
     }
 
     @Test

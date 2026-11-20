@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -82,12 +83,24 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
     private val processingEngine = VideoProcessingEngine(application)
 
     val settings: StateFlow<AppSettings> = settingsRepository.settingsFlow
+        .catch { err ->
+            Log.w(TAG, "Failed reading settings flow", err)
+            emit(AppSettings())
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
 
     val projects: StateFlow<List<ProjectEntity>> = projectRepository.allProjects
+        .catch { err ->
+            Log.w(TAG, "Failed observing projects table", err)
+            emit(emptyList())
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val exportHistory: StateFlow<List<ExportRecordEntity>> = projectRepository.allExports
+        .catch { err ->
+            Log.w(TAG, "Failed observing export history table", err)
+            emit(emptyList())
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _editorState = MutableStateFlow(ActiveEditorState())
@@ -105,7 +118,7 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
     private val _exportState = MutableStateFlow<ExportUiState>(ExportUiState.Idle)
     val exportState: StateFlow<ExportUiState> = _exportState.asStateFlow()
 
-    private val _cacheSizeBytes = MutableStateFlow(calculateCacheBytes())
+    private val _cacheSizeBytes = MutableStateFlow(0L)
     val cacheSizeBytes: StateFlow<Long> = _cacheSizeBytes.asStateFlow()
 
     private var urlJob: Job? = null
@@ -114,7 +127,7 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         viewModelScope.launch {
-            val s = settingsRepository.settingsFlow.first()
+            val s = runCatching { settingsRepository.settingsFlow.first() }.getOrDefault(AppSettings())
             _editorState.update {
                 it.copy(
                     targetClipDurationSec = s.defaultClipDurationSec,
@@ -122,6 +135,9 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     watermarkConfig = it.watermarkConfig.copy(text = s.defaultWatermarkText)
                 )
             }
+        }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _cacheSizeBytes.value = calculateCacheBytes()
         }
     }
 
@@ -322,9 +338,12 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateTrimRange(startMs: Long, endMs: Long) {
-        val maxDur = _editorState.value.metadata?.durationMs ?: Long.MAX_VALUE
-        val safeStart = startMs.coerceIn(0L, (maxDur - 1000L).coerceAtLeast(0L))
-        val safeEnd = endMs.coerceIn(safeStart + 1000L, maxDur)
+        val maxDur = (_editorState.value.metadata?.durationMs ?: 60_000L).coerceAtLeast(1L)
+        val minGap = minOf(1000L, maxDur)
+        val maxStart = (maxDur - minGap).coerceAtLeast(0L)
+        val safeStart = startMs.coerceIn(0L, maxStart)
+        val minEnd = (safeStart + minGap).coerceAtMost(maxDur)
+        val safeEnd = endMs.coerceIn(minEnd, maxDur)
         _editorState.update { it.copy(clipStartMs = safeStart, clipEndMs = safeEnd) }
     }
 
@@ -335,11 +354,13 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
         if (mode == CropMode.SMART_CROP) {
             val meta = _editorState.value.metadata ?: return
             viewModelScope.launch {
-                val detectedX = VideoMetadataHelper.detectSubjectCenterX(
-                    getApplication(),
-                    meta.uriString,
-                    meta.durationMs
-                )
+                val detectedX = runCatching {
+                    VideoMetadataHelper.detectSubjectCenterX(
+                        getApplication(),
+                        meta.uriString,
+                        meta.durationMs
+                    )
+                }.getOrNull()
                 _editorState.update {
                     it.copy(
                         cropSettings = it.cropSettings.copy(detectedSubjectCenterX = detectedX),
@@ -565,10 +586,20 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun runExportBatch(requests: List<ExportJobRequest>) {
+        if (requests.isEmpty()) return
         lastExportRequests = requests
         exportJob?.cancel()
         exportJob = viewModelScope.launch {
             val ctx = getApplication<Application>()
+            if (!VideoMetadataHelper.hasEnoughStorage(ctx, 64L * 1024L * 1024L)) {
+                _exportState.value = ExportUiState.Error("Insufficient storage space (at least 64 MB free required).")
+                return@launch
+            }
+            if (!VideoMetadataHelper.isUriAccessible(ctx, requests.first().sourceUriString)) {
+                _exportState.value = ExportUiState.Error("Source video file is no longer accessible. Please re-import it.")
+                return@launch
+            }
+
             val completed = mutableListOf<ExportedVideoSummary>()
             val notifyEnabled = settings.value.notifyOnExportComplete
 
@@ -703,72 +734,91 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
     private suspend fun saveCurrentProjectInternal(): Long? {
         val state = _editorState.value
         val meta = state.metadata ?: return null
-        return projectRepository.saveWorkspace(
-            ProjectWorkspaceData(
-                id = state.projectId,
-                name = state.projectName.ifBlank { meta.title },
-                metadata = meta,
-                clipStartMs = state.clipStartMs,
-                clipEndMs = state.clipEndMs,
-                cropSettings = state.cropSettings,
-                subtitlesEnabled = state.subtitlesEnabled,
-                subtitleCues = state.subtitleCues,
-                subtitleStyle = state.subtitleStyle,
-                watermarkConfig = state.watermarkConfig,
-                suggestedClips = state.suggestedClips,
-                latestExportUri = state.latestExportUri
+        return runCatching {
+            projectRepository.saveWorkspace(
+                ProjectWorkspaceData(
+                    id = state.projectId,
+                    name = state.projectName.ifBlank { meta.title },
+                    metadata = meta,
+                    clipStartMs = state.clipStartMs,
+                    clipEndMs = state.clipEndMs,
+                    cropSettings = state.cropSettings,
+                    subtitlesEnabled = state.subtitlesEnabled,
+                    subtitleCues = state.subtitleCues,
+                    subtitleStyle = state.subtitleStyle,
+                    watermarkConfig = state.watermarkConfig,
+                    suggestedClips = state.suggestedClips,
+                    latestExportUri = state.latestExportUri
+                )
             )
-        )
+        }.onFailure { err ->
+            Log.w(TAG, "Failed saving project to Room", err)
+        }.getOrNull()
     }
 
     fun openProject(entity: ProjectEntity, onLoaded: () -> Unit) {
         viewModelScope.launch {
-            val workspace = projectRepository.entityToWorkspace(entity)
-            _editorState.value = ActiveEditorState(
-                projectId = workspace.id,
-                projectName = workspace.name,
-                metadata = workspace.metadata,
-                clipStartMs = workspace.clipStartMs,
-                clipEndMs = workspace.clipEndMs,
-                cropSettings = workspace.cropSettings,
-                subtitlesEnabled = workspace.subtitlesEnabled,
-                subtitleCues = workspace.subtitleCues,
-                subtitleStyle = workspace.subtitleStyle,
-                watermarkConfig = workspace.watermarkConfig,
-                suggestedClips = workspace.suggestedClips,
-                latestExportUri = workspace.latestExportUri
-            )
-            _aiState.value = if (workspace.suggestedClips.isNotEmpty()) {
-                AiAnalysisState.Success(workspace.suggestedClips)
-            } else {
-                AiAnalysisState.Idle
+            runCatching {
+                projectRepository.entityToWorkspace(entity)
+            }.onSuccess { workspace ->
+                _editorState.value = ActiveEditorState(
+                    projectId = workspace.id,
+                    projectName = workspace.name,
+                    metadata = workspace.metadata,
+                    clipStartMs = workspace.clipStartMs,
+                    clipEndMs = workspace.clipEndMs,
+                    cropSettings = workspace.cropSettings,
+                    subtitlesEnabled = workspace.subtitlesEnabled,
+                    subtitleCues = workspace.subtitleCues,
+                    subtitleStyle = workspace.subtitleStyle,
+                    watermarkConfig = workspace.watermarkConfig,
+                    suggestedClips = workspace.suggestedClips,
+                    latestExportUri = workspace.latestExportUri
+                )
+                _aiState.value = if (workspace.suggestedClips.isNotEmpty()) {
+                    AiAnalysisState.Success(workspace.suggestedClips)
+                } else {
+                    AiAnalysisState.Idle
+                }
+                onLoaded()
+            }.onFailure { err ->
+                Log.w(TAG, "Failed opening saved project", err)
+                _editorState.update {
+                    it.copy(errorMessage = err.localizedMessage ?: "Failed to open project.")
+                }
             }
-            onLoaded()
         }
     }
 
     fun renameProject(id: Long, newName: String) {
         if (newName.isBlank()) return
         viewModelScope.launch {
-            projectRepository.renameProject(id, newName)
-            if (_editorState.value.projectId == id) {
-                _editorState.update { it.copy(projectName = newName.trim()) }
-            }
+            runCatching { projectRepository.renameProject(id, newName) }
+                .onSuccess {
+                    if (_editorState.value.projectId == id) {
+                        _editorState.update { it.copy(projectName = newName.trim()) }
+                    }
+                }
+                .onFailure { Log.w(TAG, "Failed renaming project", it) }
         }
     }
 
     fun deleteProject(id: Long) {
         viewModelScope.launch {
-            projectRepository.deleteProject(id)
-            if (_editorState.value.projectId == id) {
-                _editorState.update { it.copy(projectId = 0L) }
-            }
+            runCatching { projectRepository.deleteProject(id) }
+                .onSuccess {
+                    if (_editorState.value.projectId == id) {
+                        _editorState.update { it.copy(projectId = 0L) }
+                    }
+                }
+                .onFailure { Log.w(TAG, "Failed deleting project", it) }
         }
     }
 
     fun deleteExportRecord(id: Long) {
         viewModelScope.launch {
-            projectRepository.deleteExportRecord(id)
+            runCatching { projectRepository.deleteExportRecord(id) }
+                .onFailure { Log.w(TAG, "Failed deleting export record", it) }
         }
     }
 
@@ -778,57 +828,66 @@ class ClipForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     // --- Settings & Privacy ---
     fun updateDefaultClipDuration(sec: Int) {
-        viewModelScope.launch { settingsRepository.updateDefaultClipDuration(sec) }
+        viewModelScope.launch { runCatching { settingsRepository.updateDefaultClipDuration(sec) } }
     }
 
     fun updateDefaultCropMode(mode: CropMode) {
-        viewModelScope.launch { settingsRepository.updateDefaultCropMode(mode) }
+        viewModelScope.launch { runCatching { settingsRepository.updateDefaultCropMode(mode) } }
     }
 
     fun updateDefaultSubtitleLanguage(lang: SubtitleLanguage) {
-        viewModelScope.launch { settingsRepository.updateDefaultSubtitleLanguage(lang) }
+        viewModelScope.launch { runCatching { settingsRepository.updateDefaultSubtitleLanguage(lang) } }
     }
 
     fun updateDefaultWatermarkText(text: String) {
-        viewModelScope.launch { settingsRepository.updateDefaultWatermarkText(text) }
+        viewModelScope.launch { runCatching { settingsRepository.updateDefaultWatermarkText(text) } }
     }
 
     fun updateNotifyOnExport(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.updateNotifyOnExport(enabled) }
+        viewModelScope.launch { runCatching { settingsRepository.updateNotifyOnExport(enabled) } }
     }
 
     fun updateAutoCleanupTemp(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.updateAutoCleanupTemp(enabled) }
+        viewModelScope.launch { runCatching { settingsRepository.updateAutoCleanupTemp(enabled) } }
     }
 
     fun clearTemporaryCache() {
         viewModelScope.launch {
-            val ctx = getApplication<Application>()
-            listOf("exports_tmp", "url_videos").forEach { dirName ->
-                File(ctx.cacheDir, dirName).deleteRecursively()
-            }
-            ctx.cacheDir.listFiles()?.forEach { f ->
-                if (f.name.startsWith("ai_audio_seg_")) f.delete()
-            }
-            _cacheSizeBytes.value = calculateCacheBytes()
-            _editorState.update { it.copy(statusMessage = "Temporary media cache cleared.") }
+            runCatching {
+                val ctx = getApplication<Application>()
+                listOf("exports_tmp", "url_videos").forEach { dirName ->
+                    File(ctx.cacheDir, dirName).deleteRecursively()
+                }
+                ctx.cacheDir.listFiles()?.forEach { f ->
+                    if (f.name.startsWith("ai_audio_seg_")) f.delete()
+                }
+                _cacheSizeBytes.value = calculateCacheBytes()
+                _editorState.update { it.copy(statusMessage = "Temporary media cache cleared.") }
+            }.onFailure { Log.w(TAG, "Failed clearing cache", it) }
         }
     }
 
     fun deleteAllProjectsAndData() {
         viewModelScope.launch {
-            projectRepository.deleteAllData()
-            settingsRepository.resetDefaults()
-            clearTemporaryCache()
-            File(getApplication<Application>().filesDir, "thumbnails").deleteRecursively()
-            _editorState.value = ActiveEditorState(statusMessage = "All local projects, exports, and thumbnails deleted.")
-            _aiState.value = AiAnalysisState.Idle
-            _subtitleGenState.value = SubtitleGenState.Idle
+            runCatching {
+                projectRepository.deleteAllData()
+                settingsRepository.resetDefaults()
+                clearTemporaryCache()
+                File(getApplication<Application>().filesDir, "thumbnails").deleteRecursively()
+                _editorState.value = ActiveEditorState(statusMessage = "All local projects, exports, and thumbnails deleted.")
+                _aiState.value = AiAnalysisState.Idle
+                _subtitleGenState.value = SubtitleGenState.Idle
+            }.onFailure { err ->
+                Log.w(TAG, "Failed deleting all data", err)
+                _editorState.update { it.copy(errorMessage = err.localizedMessage ?: "Failed deleting local data.") }
+            }
         }
     }
 
     private fun calculateCacheBytes(): Long {
-        val cache = getApplication<Application>().cacheDir
-        return cache.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        return runCatching {
+            val cache = getApplication<Application>().cacheDir
+            cache.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        }.getOrDefault(0L)
     }
 }

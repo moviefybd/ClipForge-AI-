@@ -102,6 +102,7 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.ActiveEditorState
 import java.io.File
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -240,7 +241,7 @@ fun AiShortsGeneratorScreen(
                             color = AccentLavender
                         )
                         Slider(
-                            value = editorState.targetClipDurationSec.toFloat(),
+                            value = editorState.targetClipDurationSec.toFloat().coerceIn(10f, 90f),
                             onValueChange = { onSelectDuration(it.toInt()) },
                             valueRange = 10f..90f,
                             colors = SliderDefaults.colors(
@@ -475,9 +476,9 @@ fun VideoUrlInputScreen(
 
                         is UrlDownloadState.Downloading -> {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                val totalLabel = urlState.totalMb?.let { String.format("/ %.1f MB", it) }.orEmpty()
+                                val totalLabel = urlState.totalMb?.let { String.format(Locale.US, "/ %.1f MB", it) }.orEmpty()
                                 Text(
-                                    text = "Downloading ${String.format("%.1f MB", urlState.downloadedMb)} $totalLabel (${urlState.progressPercent}%)",
+                                    text = "Downloading ${String.format(Locale.US, "%.1f MB", urlState.downloadedMb)} $totalLabel (${urlState.progressPercent}%)",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = AccentLavender
                                 )
@@ -643,6 +644,8 @@ fun LocalVideoPickerScreen(
     onOpenWatermark: () -> Unit,
     onBack: () -> Unit
 ) {
+    var pickerError by remember { mutableStateOf<String?>(null) }
+
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -675,7 +678,13 @@ fun LocalVideoPickerScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
-                ErrorBanner(message = editorState.errorMessage, onDismiss = onDismissError)
+                ErrorBanner(
+                    message = pickerError ?: editorState.errorMessage,
+                    onDismiss = {
+                        pickerError = null
+                        onDismissError()
+                    }
+                )
             }
 
             item {
@@ -695,9 +704,15 @@ fun LocalVideoPickerScreen(
 
                     Button(
                         onClick = {
-                            photoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                            )
+                            pickerError = null
+                            runCatching {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                )
+                            }.onFailure { err ->
+                                pickerError = err.localizedMessage
+                                    ?: "Photo Picker unavailable on this device. Try Browse Files below."
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple),
                         shape = RoundedCornerShape(14.dp),
@@ -714,7 +729,15 @@ fun LocalVideoPickerScreen(
                     Spacer(Modifier.height(10.dp))
 
                     OutlinedButton(
-                        onClick = { safDocumentLauncher.launch(arrayOf("video/*")) },
+                        onClick = {
+                            pickerError = null
+                            runCatching {
+                                safDocumentLauncher.launch(arrayOf("video/*"))
+                            }.onFailure { err ->
+                                pickerError = err.localizedMessage
+                                    ?: "No file picker application found on this device."
+                            }
+                        },
                         border = BorderStroke(1.dp, StudioBorder),
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier

@@ -104,12 +104,14 @@ object MediaStoreExporter {
 
     fun buildShareIntent(context: Context, uriString: String, title: String): Intent {
         val uri = Uri.parse(uriString)
-        val shareUri = if (uri.scheme == "file" && uri.path != null) {
-            FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                File(uri.path!!)
-            )
+        val shareUri = if (uri.scheme == "file" && !uri.path.isNullOrBlank()) {
+            runCatching {
+                FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    File(uri.path!!)
+                )
+            }.getOrDefault(uri)
         } else {
             uri
         }

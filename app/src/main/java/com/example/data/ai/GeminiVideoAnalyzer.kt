@@ -10,6 +10,7 @@ import com.example.model.SuggestedClip
 import com.example.model.VideoMetadata
 import com.example.model.formatTimestampMs
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
 import com.google.firebase.ai.type.content
@@ -82,6 +83,11 @@ class GeminiVideoAnalyzer(private val context: Context) {
         targetClipDurationSec: Int,
         onStageProgress: (stage: String, fraction: Float) -> Unit
     ): Result<List<SuggestedClip>> {
+        if (FirebaseApp.getApps(context).isEmpty() && FirebaseApp.initializeApp(context) == null) {
+            return Result.failure(
+                IllegalStateException("Firebase AI is not configured in this build.")
+            )
+        }
         if (!VideoUrlDownloader.isNetworkAvailable(context)) {
             return Result.failure(
                 IllegalStateException("No internet connection. Connect to Wi-Fi or mobile data to run AI analysis.")
@@ -215,6 +221,11 @@ class GeminiVideoAnalyzer(private val context: Context) {
         if (!metadata.hasAudio) {
             return Result.failure(
                 IllegalStateException("This video has no audio track to transcribe.")
+            )
+        }
+        if (FirebaseApp.getApps(context).isEmpty() && FirebaseApp.initializeApp(context) == null) {
+            return Result.failure(
+                IllegalStateException("Firebase AI is not configured in this build.")
             )
         }
         if (!VideoUrlDownloader.isNetworkAvailable(context)) {

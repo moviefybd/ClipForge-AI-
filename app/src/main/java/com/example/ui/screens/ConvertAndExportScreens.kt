@@ -75,6 +75,7 @@ import com.example.ui.theme.StudioCardElevated
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.ActiveEditorState
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -98,7 +99,11 @@ fun OneClickConvertScreen(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            runCatching {
+                notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }.onFailure {
+                onConvertClick()
+            }
         } else {
             onConvertClick()
         }
@@ -119,7 +124,8 @@ fun OneClickConvertScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .testTag("one_click_lazy_column"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -191,7 +197,7 @@ fun OneClickConvertScreen(
                         ) {
                             Spacer(Modifier.height(10.dp))
                             Text(
-                                text = "Manual Pan X (${String.format("%.2f", editorState.cropSettings.manualPanX)}) • Zoom (${String.format("%.1fx", editorState.cropSettings.zoom)})",
+                                text = "Manual Pan X (${String.format(Locale.US, "%.2f", editorState.cropSettings.manualPanX)}) • Zoom (${String.format(Locale.US, "%.1fx", editorState.cropSettings.zoom)})",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = AccentLavender
                             )
@@ -280,7 +286,8 @@ fun VideoPreviewScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .testTag("video_preview_lazy_column"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -316,8 +323,10 @@ fun VideoPreviewScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                val intent = MediaStoreExporter.buildShareIntent(context, uriString, title)
-                                context.startActivity(intent)
+                                runCatching {
+                                    val intent = MediaStoreExporter.buildShareIntent(context, uriString, title)
+                                    context.startActivity(intent)
+                                }
                             },
                             modifier = Modifier.weight(1f).testTag("preview_share_btn")
                         ) {
@@ -494,12 +503,14 @@ fun ExportProgressScreen(
                                 }
                                 OutlinedButton(
                                     onClick = {
-                                        val share = MediaStoreExporter.buildShareIntent(
-                                            context,
-                                            item.outputUriString,
-                                            item.title
-                                        )
-                                        context.startActivity(share)
+                                        runCatching {
+                                            val share = MediaStoreExporter.buildShareIntent(
+                                                context,
+                                                item.outputUriString,
+                                                item.title
+                                            )
+                                            context.startActivity(share)
+                                        }
                                     },
                                     modifier = Modifier.weight(1f).testTag("export_done_share_btn")
                                 ) {

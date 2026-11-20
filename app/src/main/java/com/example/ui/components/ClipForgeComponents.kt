@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.net.Uri
+import android.view.LayoutInflater
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -414,25 +415,45 @@ fun VideoPlayerStage(
     var isPlaying by remember { mutableStateOf(false) }
     var currentPosMs by remember { mutableLongStateOf(startMs.coerceAtLeast(0L)) }
     var totalDurationMs by remember { mutableLongStateOf(1000L) }
+    var playerErrorMessage by remember(uriString) { mutableStateOf<String?>(null) }
 
-    val exoPlayer = remember(uriString, startMs, endMs) {
-        ExoPlayer.Builder(context).build().apply {
+    val exoPlayer = remember(uriString) {
+        runCatching {
+            ExoPlayer.Builder(context).build().apply {
+                repeatMode = Player.REPEAT_MODE_ONE
+            }
+        }.onFailure { err ->
+            playerErrorMessage = err.localizedMessage ?: "Video player unavailable on this device."
+        }.getOrNull()
+    }
+
+    LaunchedEffect(exoPlayer, uriString, startMs, endMs) {
+        val player = exoPlayer ?: return@LaunchedEffect
+        runCatching {
+            playerErrorMessage = null
+            val safeStart = startMs.coerceAtLeast(0L)
             val mediaItemBuilder = MediaItem.Builder().setUri(Uri.parse(uriString))
-            if (startMs > 0L || endMs > startMs) {
+            if (safeStart > 0L || endMs > safeStart) {
                 val clipBuilder = MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(startMs.coerceAtLeast(0L))
-                if (endMs > startMs) {
+                    .setStartPositionMs(safeStart)
+                if (endMs > safeStart) {
                     clipBuilder.setEndPositionMs(endMs)
                 }
                 mediaItemBuilder.setClippingConfiguration(clipBuilder.build())
             }
-            setMediaItem(mediaItemBuilder.build())
-            repeatMode = Player.REPEAT_MODE_ONE
-            prepare()
+            player.setMediaItem(mediaItemBuilder.build())
+            player.prepare()
+            currentPosMs = 0L
+        }.onFailure { err ->
+            playerErrorMessage = err.localizedMessage ?: "Unable to load video preview."
         }
     }
 
     DisposableEffect(exoPlayer, lifecycleOwner) {
+        val player = exoPlayer
+        if (player == null) {
+            return@DisposableEffect onDispose { }
+        }
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
@@ -440,31 +461,41 @@ fun VideoPlayerStage(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
-                    totalDurationMs = exoPlayer.duration.coerceAtLeast(1000L)
+                    playerErrorMessage = null
+                    totalDurationMs = player.duration.coerceAtLeast(1000L)
                 }
             }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                isPlaying = false
+                playerErrorMessage = error.localizedMessage ?: "Video preview failed to play."
+            }
         }
-        exoPlayer.addListener(listener)
+        player.addListener(listener)
 
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) {
-                exoPlayer.pause()
+                runCatching { player.pause() }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
 
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            exoPlayer.removeListener(listener)
-            exoPlayer.release()
+            runCatching { player.removeListener(listener) }
+            runCatching { player.release() }
         }
     }
 
     LaunchedEffect(exoPlayer, isPlaying) {
-        while (true) {
-            val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+        val player = exoPlayer ?: return@LaunchedEffect
+        val initialPos = runCatching { player.currentPosition.coerceAtLeast(0L) }.getOrDefault(0L)
+        currentPosMs = initialPos
+        onPositionChanged(initialPos + startMs.coerceAtLeast(0L))
+        while (isPlaying) {
+            val pos = runCatching { player.currentPosition.coerceAtLeast(0L) }.getOrDefault(0L)
             currentPosMs = pos
-            onPositionChanged(pos + startMs)
+            onPositionChanged(pos + startMs.coerceAtLeast(0L))
             delay(120L)
         }
     }
@@ -506,29 +537,41 @@ fun VideoPlayerStage(
                 .border(1.5.dp, StudioBorder, RoundedCornerShape(20.dp)),
             contentAlignment = Alignment.Center
         ) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        player = exoPlayer
-                        useController = false
-                        resizeMode = when (cropSettings.mode) {
+            if (exoPlayer != null) {
+                AndroidView(
+                    factory = { ctx ->
+                        (LayoutInflater.from(ctx).inflate(
+                            R.layout.clipforge_player_view,
+                            null,
+                            false
+                        ) as PlayerView).apply {
+                            player = exoPlayer
+                            useController = false
+                            resizeMode = when (cropSettings.mode) {
+                                CropMode.FIT_ORIGINAL, CropMode.BLUR_BACKGROUND ->
+                                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                CropMode.CENTER_CROP, CropMode.SMART_CROP ->
+                                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            }
+                        }
+                    },
+                    update = { view ->
+                        if (view.player !== exoPlayer) {
+                            view.player = exoPlayer
+                        }
+                        view.resizeMode = when (cropSettings.mode) {
                             CropMode.FIT_ORIGINAL, CropMode.BLUR_BACKGROUND ->
                                 AspectRatioFrameLayout.RESIZE_MODE_FIT
                             CropMode.CENTER_CROP, CropMode.SMART_CROP ->
                                 AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                         }
-                    }
-                },
-                update = { view ->
-                    view.resizeMode = when (cropSettings.mode) {
-                        CropMode.FIT_ORIGINAL, CropMode.BLUR_BACKGROUND ->
-                            AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        CropMode.CENTER_CROP, CropMode.SMART_CROP ->
-                            AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                    },
+                    onRelease = { view ->
+                        view.player = null
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
 
             // Live Watermark Overlay Preview
             if (watermarkConfig.enabled) {
@@ -559,14 +602,19 @@ fun VideoPlayerStage(
                             }
                         )
                     } else if (watermarkConfig.type == WatermarkType.IMAGE && watermarkConfig.imageUriString != null) {
-                        AsyncImage(
-                            model = Uri.parse(watermarkConfig.imageUriString),
-                            contentDescription = "Watermark preview",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .size((watermarkConfig.imageSizeDp * 0.6f).dp)
-                                .alpha(watermarkConfig.opacity.coerceIn(0.05f, 1f))
-                        )
+                        val safeImageUri = remember(watermarkConfig.imageUriString) {
+                            runCatching { Uri.parse(watermarkConfig.imageUriString) }.getOrNull()
+                        }
+                        if (safeImageUri != null) {
+                            AsyncImage(
+                                model = safeImageUri,
+                                contentDescription = "Watermark preview",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .size((watermarkConfig.imageSizeDp * 0.6f).dp)
+                                    .alpha(watermarkConfig.opacity.coerceIn(0.05f, 1f))
+                            )
+                        }
                     }
                 }
             }
@@ -616,23 +664,43 @@ fun VideoPlayerStage(
                 }
             }
 
-            // Center Play/Pause Tap Overlay
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(StudioBackground.copy(alpha = 0.6f))
-                    .clickable {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause preview" else "Play preview",
-                    tint = Color.White,
-                    modifier = Modifier.size(30.dp)
-                )
+            // Center Play/Pause Tap Overlay or Error indicator
+            if (playerErrorMessage != null) {
+                Surface(
+                    color = StatusErrorContainer.copy(alpha = 0.92f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, StatusError.copy(alpha = 0.6f)),
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Text(
+                        text = playerErrorMessage.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextPrimary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(StudioBackground.copy(alpha = 0.6f))
+                        .clickable(enabled = exoPlayer != null) {
+                            val player = exoPlayer ?: return@clickable
+                            runCatching {
+                                if (player.isPlaying) player.pause() else player.play()
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = if (isPlaying) "Pause preview" else "Play preview",
+                        tint = Color.White,
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
             }
         }
 
@@ -652,7 +720,7 @@ fun VideoPlayerStage(
             Slider(
                 value = currentPosMs.toFloat().coerceIn(0f, totalDurationMs.toFloat().coerceAtLeast(1f)),
                 onValueChange = { newVal ->
-                    exoPlayer.seekTo(newVal.toLong())
+                    runCatching { exoPlayer?.seekTo(newVal.toLong()) }
                     currentPosMs = newVal.toLong()
                 },
                 valueRange = 0f..totalDurationMs.toFloat().coerceAtLeast(1f),
